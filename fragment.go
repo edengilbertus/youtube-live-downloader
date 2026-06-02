@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -225,6 +226,14 @@ func (fd *FragmentDownloader) pollForNewSegments(ctx context.Context, startSeq i
 
 // buildFragmentURL constructs the fragment URL from base URL and sequence number
 func (fd *FragmentDownloader) buildFragmentURL(seq int) string {
-	base := strings.TrimRight(fd.BaseURL, "/")
-	return fmt.Sprintf("%s/sq/%d", base, seq)
+	u, err := url.Parse(fd.BaseURL)
+	if err != nil {
+		// Fallback to simple append if parsing fails
+		base := strings.TrimRight(fd.BaseURL, "/")
+		return fmt.Sprintf("%s/sq/%d", base, seq)
+	}
+
+	// Safely append to the path, preserving query parameters
+	u.Path = strings.TrimRight(u.Path, "/") + fmt.Sprintf("/sq/%d", seq)
+	return u.String()
 }

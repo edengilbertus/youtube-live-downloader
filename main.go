@@ -136,7 +136,7 @@ func main() {
 	errChan := make(chan error, 2)
 
 	// Initialize video downloader
-	videoOutput := fmt.Sprintf("%s_video.ts", videoID)
+	videoOutput := fmt.Sprintf("%s_video.tmp", videoID)
 	videoBaseURL := BuildFragmentBaseURL(bestVideo)
 	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput)
 	if err != nil {
@@ -160,7 +160,7 @@ func main() {
 	var audioDownloader *FragmentDownloader
 	audioOutput := ""
 	if bestAudio != nil {
-		audioOutput = fmt.Sprintf("%s_audio.ts", videoID)
+		audioOutput = fmt.Sprintf("%s_audio.tmp", videoID)
 		audioBaseURL := BuildFragmentBaseURL(*bestAudio)
 		audioDownloader, err = NewFragmentDownloader(audioBaseURL, audioOutput)
 		if err != nil {
@@ -206,7 +206,7 @@ func main() {
 
 	// Check if video file contains downloaded content to mux
 	if fileInfo, err := os.Stat(videoOutput); err == nil && fileInfo.Size() > 0 {
-		outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mp4")
+		outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mkv")
 		muxer := NewMuxer()
 
 		fmt.Println("Muxing streams...")
