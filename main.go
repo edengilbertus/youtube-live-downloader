@@ -27,13 +27,11 @@ func main() {
 
 	flag.Parse()
 
-	// Handle version flag
 	if *showVersion {
 		fmt.Printf("yt-live version %s\n", version)
 		os.Exit(0)
 	}
 
-	// Get URL from args
 	args := flag.Args()
 	if len(args) < 1 {
 		flag.Usage()
@@ -42,7 +40,6 @@ func main() {
 
 	url := args[0]
 
-	// Extract video ID
 	videoID, err := ExtractVideoID(url)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -51,7 +48,6 @@ func main() {
 
 	fmt.Printf("Video ID: %s\n", videoID)
 
-	// Extract video info
 	fmt.Println("Extracting video info...")
 	info, err := ExtractVideoInfo(videoID)
 	if err != nil {
@@ -66,7 +62,6 @@ func main() {
 		fmt.Println("Warning: This does not appear to be a live stream.")
 	}
 
-	// List formats mode
 	if *listFormats {
 		if info.DashManifestURL != "" {
 			fmt.Printf("DASH: %s\n", info.DashManifestURL)
@@ -77,35 +72,118 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Need DASH manifest for live-from-start
 	if info.DashManifestURL == "" {
 		fmt.Fprintf(os.Stderr, "Error: No DASH manifest found. Cannot download from start.\n")
-		fmt.Fprintf(os.Stderr, "This stream may only have HLS, which doesn't support live-from-start.\n")
 		os.Exit(1)
 	}
 
-	// Normalize URL for DVR
 	dashURL := NormalizeDashURL(info.DashManifestURL)
+	fmt.Println("Parsing DASH manifest...")
 
-	// TODO: Parse DASH manifest to get fragment base URL
-	// For now, use a placeholder
-	fmt.Printf("DASH URL: %s\n", dashURL[:100]+"...")
+	manifest, err := ParseDASHManifest(dashURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing DASH manifest: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Set up signal handling for graceful shutdown
+	videoStreams := manifest.GetVideoStreams()
+	audioStreams := manifest.GetAudioStreams()
+
+	if len(videoStreams) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: No video streams found in manifest\n")
+		os.Exit(1)
+	}
+
+	// Select best video stream (highest bandwidth)
+	bestVideo := videoStreams[0]
+	for _, s := range videoStreams {
+		if s.Bandwidth > bestVideo.Bandwidth {
+			bestVideo = s
+		}
+	}
+
+	fmt.Printf("Selected video: %dx%d (%d kbps)\n", bestVideo.Width, bestVideo.Height, bestVideo.Bandwidth/1000)
+
+	// Select best audio stream
+	var bestAudio *DashStreamInfo
+	if len(audioStreams) > 0 {
+		bestAudio = &audioStreams[0]
+		for _, s := range audioStreams {
+			if s.Bandwidth > bestAudio.Bandwidth {
+				bestAudio = &s
+			}
+		}
+		fmt.Printf("Selected audio: %d kbps\n", bestAudio.Bandwidth/1000)
+	}
+
+	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Use the output flag (will be used in download pipeline)
-	_ = outputFlag
+	go func() {
+		<-sigChan
+		fmt.Println("\nStopping download...")
+		os.Exit(0)
+	}()
 
-	fmt.Println("Starting download...")
-	fmt.Println("Press Ctrl+C to stop.")
+	// Download video
+	videoOutput := fmt.Sprintf("%s_video.ts", videoID)
+	videoBaseURL := BuildFragmentBaseURL(bestVideo)
 
-	// TODO: Implement full download pipeline
-	// 1. Parse DASH manifest
-	// 2. Extract fragment base URL
-	// 3. Download fragments
-	// 4. Mux with ffmpeg
+	fmt.Println("Downloading video fragments...")
+	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating video downloader: %v\n", err)
+		os.Exit(1)
+	}
+	defer videoDownloader.Close()
 
-	fmt.Println("Download complete!")
+	if err := videoDownloader.DownloadFromStart(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error downloading video: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Download audio if separate
+	audioOutput := ""
+	if bestAudio != nil {
+		audioOutput = fmt.Sprintf("%s_audio.ts", videoID)
+		audioBaseURL := BuildFragmentBaseURL(*bestAudio)
+
+		fmt.Println("Downloading audio fragments...")
+		audioDownloader, err := NewFragmentDownloader(audioBaseURL, audioOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating audio downloader: %v\n", err)
+			os.Exit(1)
+		}
+		defer audioDownloader.Close()
+
+		if err := audioDownloader.DownloadFromStart(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error downloading audio: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Mux streams
+	outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mp4")
+	muxer := NewMuxer()
+
+	fmt.Println("Muxing streams...")
+	if audioOutput != "" {
+		err = muxer.MuxStreams(videoOutput, audioOutput, outputPath)
+	} else {
+		err = muxer.MuxSingleStream(videoOutput, outputPath)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error muxing streams: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Clean up temp files
+	os.Remove(videoOutput)
+	if audioOutput != "" {
+		os.Remove(audioOutput)
+	}
+
+	fmt.Printf("Download complete: %s\n", outputPath)
 }
