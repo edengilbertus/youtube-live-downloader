@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -58,6 +59,17 @@ type TokenResult struct {
 	POToken     string `json:"poToken"`
 }
 
+// getCacheDir returns the path to the centralized ~/.yt-live cache directory
+func getCacheDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return os.TempDir()
+	}
+	cacheDir := filepath.Join(home, ".yt-live")
+	_ = os.MkdirAll(cacheDir, 0755)
+	return cacheDir
+}
+
 // getOrGenerateTokens retrieves provided tokens or generates them using Node.js helper
 func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 	if poToken != "" && visitorData != "" {
@@ -66,8 +78,11 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 
 	fmt.Println("No tokens provided. Generating PO Token automatically using Node.js...")
 
-	// Verify or write the get_token.js helper file (always overwrite to ensure latest script containing process.exit)
-	err := os.WriteFile("get_token.js", []byte(tokenJS), 0644)
+	cacheDir := getCacheDir()
+	jsPath := filepath.Join(cacheDir, "get_token.js")
+
+	// Write helper JS file to cache dir
+	err := os.WriteFile(jsPath, []byte(tokenJS), 0644)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to write get_token.js: %w", err)
 	}
@@ -75,6 +90,7 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 	// Prepare token generation command
 	runCmd := func() (string, string, error) {
 		cmd := exec.Command("node", "get_token.js")
+		cmd.Dir = cacheDir // Execute command inside the cache directory
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -92,11 +108,12 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 
 	poToken, visitorData, err = runCmd()
 	if err != nil {
-		// If npm package is missing, install it and retry
+		// If npm package is missing, install it in cacheDir and retry
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "Cannot find module") {
-			fmt.Println("youtube-po-token-generator package missing. Installing via npm...")
+			fmt.Println("youtube-po-token-generator package missing. Installing via npm in ~/.yt-live...")
 			installCmd := exec.Command("npm", "install", "youtube-po-token-generator")
+			installCmd.Dir = cacheDir // Run npm install in cache directory
 			if installErr := installCmd.Run(); installErr != nil {
 				return "", "", fmt.Errorf("npm install failed: %w", installErr)
 			}
