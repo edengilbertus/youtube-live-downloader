@@ -112,7 +112,7 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "Cannot find module") {
 			fmt.Println("youtube-po-token-generator package missing. Installing via npm in ~/.yt-live...")
-			installCmd := exec.Command("npm", "install", "youtube-po-token-generator")
+			installCmd := exec.Command("npm", "install", "youtube-po-token-generator@latest")
 			installCmd.Dir = cacheDir // Run npm install in cache directory
 			if installErr := installCmd.Run(); installErr != nil {
 				return "", "", fmt.Errorf("npm install failed: %w", installErr)
