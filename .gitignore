@@ -7,3 +7,9 @@ ffmpeg
 *.ts
 *.m4s
 *.m3u8
+
+# Node dependencies & helper scripts
+node_modules/
+package.json
+package-lock.json
+get_token.js
