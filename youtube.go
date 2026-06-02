@@ -44,6 +44,7 @@ async function main() {
     try {
         const result = await generate();
         console.log(JSON.stringify(result));
+        process.exit(0); // Force exit to prevent JSDOM timers from keeping process alive
     } catch (err) {
         console.error("Error generating token:", err);
         process.exit(1);
@@ -65,12 +66,10 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 
 	fmt.Println("No tokens provided. Generating PO Token automatically using Node.js...")
 
-	// Verify or write the get_token.js helper file
-	if _, err := os.Stat("get_token.js"); os.IsNotExist(err) {
-		err = os.WriteFile("get_token.js", []byte(tokenJS), 0644)
-		if err != nil {
-			return "", "", fmt.Errorf("failed to write get_token.js: %w", err)
-		}
+	// Verify or write the get_token.js helper file (always overwrite to ensure latest script containing process.exit)
+	err := os.WriteFile("get_token.js", []byte(tokenJS), 0644)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to write get_token.js: %w", err)
 	}
 
 	// Prepare token generation command
@@ -91,7 +90,7 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 		return res.POToken, res.VisitorData, nil
 	}
 
-	poToken, visitorData, err := runCmd()
+	poToken, visitorData, err = runCmd()
 	if err != nil {
 		// If npm package is missing, install it and retry
 		errMsg := err.Error()
