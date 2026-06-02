@@ -19,10 +19,11 @@ type FragmentDownloader struct {
 	HTTPClient   *http.Client
 	LastSeq      int
 	PollInterval time.Duration
+	Cookies      []*http.Cookie
 }
 
 // NewFragmentDownloader creates a new fragment downloader
-func NewFragmentDownloader(baseURL, outputPath string) (*FragmentDownloader, error) {
+func NewFragmentDownloader(baseURL, outputPath string, cookies []*http.Cookie) (*FragmentDownloader, error) {
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file: %w", err)
@@ -34,6 +35,7 @@ func NewFragmentDownloader(baseURL, outputPath string) (*FragmentDownloader, err
 		HTTPClient:   &http.Client{Timeout: 30 * time.Second},
 		LastSeq:      -1,
 		PollInterval: 5 * time.Second,
+		Cookies:      cookies,
 	}, nil
 }
 
@@ -87,6 +89,9 @@ func (fd *FragmentDownloader) getCurrentSequence(ctx context.Context) (int, erro
 		return 0, err
 	}
 	req.Header.Set("Range", "bytes=0-0") // Optimization: request only the first byte to save bandwidth
+	if len(fd.Cookies) > 0 {
+		req.Header.Set("Cookie", BuildCookieHeader(fd.Cookies))
+	}
 
 	resp, err := fd.HTTPClient.Do(req)
 	if err != nil {
@@ -125,6 +130,9 @@ func (fd *FragmentDownloader) downloadFragment(ctx context.Context, seq int) err
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return err
+		}
+		if len(fd.Cookies) > 0 {
+			req.Header.Set("Cookie", BuildCookieHeader(fd.Cookies))
 		}
 
 		resp, err := fd.HTTPClient.Do(req)

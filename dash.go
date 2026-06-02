@@ -62,9 +62,18 @@ type DashStreamInfo struct {
 	StartNumber       int
 }
 
-// ParseDASHManifest fetches and parses a DASH manifest
-func ParseDASHManifest(url string) (*DASHManifest, error) {
-	resp, err := http.Get(url)
+// ParseDASHManifest fetches and parses a DASH manifest with cookies support
+func ParseDASHManifest(url string, cookies []*http.Cookie) (*DASHManifest, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	if len(cookies) > 0 {
+		req.Header.Set("Cookie", BuildCookieHeader(cookies))
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}

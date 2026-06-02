@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -19,6 +20,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version")
 	poTokenFlag := flag.String("po-token", "", "YouTube Proof of Origin token (PO Token)")
 	visitorDataFlag := flag.String("visitor-data", "", "YouTube Visitor Data header string")
+	cookiesFlag := flag.String("cookies", "", "Path to Netscape cookies file (e.g. cookies.txt)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Download YouTube live streams from the start.\n\n")
@@ -26,6 +28,7 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s https://www.youtube.com/live/VIDEO_ID\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --cookies cookies.txt https://www.youtube.com/live/VIDEO_ID\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s --po-token \"PO_TOKEN_HERE\" --visitor-data \"VISITOR_DATA_HERE\" URL\n", os.Args[0])
 	}
 
@@ -50,10 +53,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Parse cookies file if provided
+	var cookies []*http.Cookie
+	if *cookiesFlag != "" {
+		var err error
+		cookies, err = ParseCookiesFile(*cookiesFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to parse cookies file: %v\n", err)
+		} else {
+			fmt.Printf("Loaded %d YouTube cookies from %s\n", len(cookies), *cookiesFlag)
+		}
+	}
+
 	fmt.Printf("Video ID: %s\n", videoID)
 
 	fmt.Println("Extracting video info...")
-	info, err := ExtractVideoInfo(videoID, *poTokenFlag, *visitorDataFlag)
+	info, err := ExtractVideoInfo(videoID, *poTokenFlag, *visitorDataFlag, cookies)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error extracting video info: %v\n", err)
 		os.Exit(1)
@@ -84,7 +99,7 @@ func main() {
 	dashURL := NormalizeDashURL(info.DashManifestURL)
 	fmt.Println("Parsing DASH manifest...")
 
-	manifest, err := ParseDASHManifest(dashURL)
+	manifest, err := ParseDASHManifest(dashURL, cookies)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing DASH manifest: %v\n", err)
 		os.Exit(1)
@@ -140,7 +155,7 @@ func main() {
 	// Initialize video downloader
 	videoOutput := fmt.Sprintf("%s_video.ts", videoID)
 	videoBaseURL := BuildFragmentBaseURL(bestVideo)
-	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput)
+	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput, cookies)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating video downloader: %v\n", err)
 		os.Exit(1)
@@ -164,7 +179,7 @@ func main() {
 	if bestAudio != nil {
 		audioOutput = fmt.Sprintf("%s_audio.ts", videoID)
 		audioBaseURL := BuildFragmentBaseURL(*bestAudio)
-		audioDownloader, err = NewFragmentDownloader(audioBaseURL, audioOutput)
+		audioDownloader, err = NewFragmentDownloader(audioBaseURL, audioOutput, cookies)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating audio downloader: %v\n", err)
 			cancel()
