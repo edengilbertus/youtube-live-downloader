@@ -1,0 +1,7 @@
+# Binaries
+youtube-live
+yt-live
+
+# Temporary files
+*.ts
+*.m4s
