@@ -19,6 +19,18 @@ import (
 // YouTube client contexts for innertube API
 var clientContexts = []map[string]interface{}{
 	{
+		"clientName":    "WEB",
+		"clientVersion": "2.20260528.01.00",
+		"hl":            "en",
+		"gl":            "US",
+	},
+	{
+		"clientName":    "MWEB",
+		"clientVersion": "2.20260528.01.00",
+		"hl":            "en",
+		"gl":            "US",
+	},
+	{
 		"clientName":    "WEB_EMBEDDED_PLAYER",
 		"clientVersion": "1.20240101.00.00",
 		"hl":            "en",
@@ -294,6 +306,15 @@ func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poTo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	
+	clientName, _ := clientCtx["clientName"].(string)
+	if clientName == "WEB" {
+		req.Header.Set("Referer", "https://www.youtube.com/watch?v="+videoID)
+		req.Header.Set("Origin", "https://www.youtube.com")
+	} else if clientName == "MWEB" {
+		req.Header.Set("Referer", "https://m.youtube.com/watch?v="+videoID)
+	}
+
 	if len(cookies) > 0 {
 		req.Header.Set("Cookie", BuildCookieHeader(cookies))
 	}
