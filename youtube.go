@@ -218,16 +218,23 @@ func ExtractVideoInfo(videoID string, poToken string, visitorData string, cookie
 		fmt.Println("Attempting download without token...")
 	}
 
+	var errs []string
 	for _, ctx := range clientContexts {
 		info, err := tryExtractWithClient(videoID, ctx, poToken, visitorData, cookies)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", ctx["clientName"], err))
 			continue
 		}
 		if info.DashManifestURL != "" || info.HLSManifestURL != "" {
 			return info, nil
 		}
+		errs = append(errs, fmt.Sprintf("%s: no streaming data URLs in response", ctx["clientName"]))
 	}
-	return nil, fmt.Errorf("could not extract video info for %s", videoID)
+	return nil, fmt.Errorf("could not extract video info for %s (details: %s)", videoID, strings.Join(errs, "; "))
+}
+
+var httpClient = &http.Client{
+	Timeout: 15 * time.Second,
 }
 
 func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poToken string, visitorData string, cookies []*http.Cookie) (*VideoInfo, error) {
@@ -272,7 +279,7 @@ func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poTo
 		req.Header.Set("Cookie", BuildCookieHeader(cookies))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +300,16 @@ func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poTo
 
 func parsePlayerResponse(videoID string, resp map[string]interface{}) (*VideoInfo, error) {
 	info := &VideoInfo{ID: videoID}
+
+	if playabilityStatus, ok := resp["playabilityStatus"].(map[string]interface{}); ok {
+		status, _ := playabilityStatus["status"].(string)
+		if status != "OK" {
+			reason, _ := playabilityStatus["reason"].(string)
+			return nil, fmt.Errorf("playability status: %s (reason: %s)", status, reason)
+		}
+	} else {
+		return nil, fmt.Errorf("missing playabilityStatus in player response")
+	}
 
 	videoDetails, _ := resp["videoDetails"].(map[string]interface{})
 	if videoDetails != nil {

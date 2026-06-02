@@ -63,6 +63,13 @@ func main() {
 		} else {
 			fmt.Printf("Loaded %d YouTube cookies from %s\n", len(cookies), *cookiesFlag)
 		}
+	} else {
+		// Attempt automatic extraction from Chrome on macOS
+		var err error
+		cookies, err = ExtractChromeCookies()
+		if err == nil && len(cookies) > 0 {
+			fmt.Printf("Automatically loaded %d YouTube cookies from Google Chrome\n", len(cookies))
+		}
 	}
 
 	fmt.Printf("Video ID: %s\n", videoID)
