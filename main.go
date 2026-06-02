@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
@@ -116,21 +118,26 @@ func main() {
 		fmt.Printf("Selected audio: %d kbps\n", bestAudio.Bandwidth/1000)
 	}
 
-	// Set up signal handling
+	// Create cancelable context for downloads
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigChan
-		fmt.Println("\nStopping download...")
-		os.Exit(0)
+		fmt.Println("\nStopping download gracefully... Muxing downloaded fragments...")
+		cancel() // Trigger cancellation of download loops
 	}()
 
-	// Download video
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
+
+	// Initialize video downloader
 	videoOutput := fmt.Sprintf("%s_video.ts", videoID)
 	videoBaseURL := BuildFragmentBaseURL(bestVideo)
-
-	fmt.Println("Downloading video fragments...")
 	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating video downloader: %v\n", err)
@@ -138,52 +145,101 @@ func main() {
 	}
 	defer videoDownloader.Close()
 
-	if err := videoDownloader.DownloadFromStart(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error downloading video: %v\n", err)
-		os.Exit(1)
-	}
+	// Start video download goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := videoDownloader.DownloadFromStart(ctx); err != nil {
+			if err != context.Canceled {
+				errChan <- fmt.Errorf("video download error: %w", err)
+			}
+		}
+	}()
 
-	// Download audio if separate
+	// Initialize and start audio downloader if separate audio stream is present
+	var audioDownloader *FragmentDownloader
 	audioOutput := ""
 	if bestAudio != nil {
 		audioOutput = fmt.Sprintf("%s_audio.ts", videoID)
 		audioBaseURL := BuildFragmentBaseURL(*bestAudio)
-
-		fmt.Println("Downloading audio fragments...")
-		audioDownloader, err := NewFragmentDownloader(audioBaseURL, audioOutput)
+		audioDownloader, err = NewFragmentDownloader(audioBaseURL, audioOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating audio downloader: %v\n", err)
+			cancel()
+			wg.Done() // decrement video group since we are exiting early
 			os.Exit(1)
 		}
 		defer audioDownloader.Close()
 
-		if err := audioDownloader.DownloadFromStart(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error downloading audio: %v\n", err)
-			os.Exit(1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := audioDownloader.DownloadFromStart(ctx); err != nil {
+				if err != context.Canceled {
+					errChan <- fmt.Errorf("audio download error: %w", err)
+				}
+			}
+		}()
+	}
+
+	// Monitor downloads completion
+	go func() {
+		wg.Wait()
+		close(errChan)
+	}()
+
+	// Check for any download errors
+	var downloadErr error
+	for err := range errChan {
+		if err != nil {
+			downloadErr = err
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			cancel() // cancel the other downloader if one fails
 		}
 	}
 
-	// Mux streams
-	outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mp4")
-	muxer := NewMuxer()
+	// Close file handles explicitly before starting muxing to prevent file locks
+	videoDownloader.Close()
+	if audioDownloader != nil {
+		audioDownloader.Close()
+	}
 
-	fmt.Println("Muxing streams...")
-	if audioOutput != "" {
-		err = muxer.MuxStreams(videoOutput, audioOutput, outputPath)
+	// Check if video file contains downloaded content to mux
+	if fileInfo, err := os.Stat(videoOutput); err == nil && fileInfo.Size() > 0 {
+		outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mp4")
+		muxer := NewMuxer()
+
+		fmt.Println("Muxing streams...")
+		var muxErr error
+		if audioOutput != "" {
+			if audioInfo, err := os.Stat(audioOutput); err == nil && audioInfo.Size() > 0 {
+				muxErr = muxer.MuxStreams(videoOutput, audioOutput, outputPath)
+			} else {
+				fmt.Println("Warning: Audio file is empty or missing. Remuxing video stream only.")
+				muxErr = muxer.MuxSingleStream(videoOutput, outputPath)
+			}
+		} else {
+			muxErr = muxer.MuxSingleStream(videoOutput, outputPath)
+		}
+
+		if muxErr != nil {
+			fmt.Fprintf(os.Stderr, "Error muxing streams: %v\n", muxErr)
+		} else {
+			fmt.Printf("Muxing complete: %s\n", outputPath)
+		}
 	} else {
-		err = muxer.MuxSingleStream(videoOutput, outputPath)
+		fmt.Println("No segments were downloaded. Skipping muxing.")
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error muxing streams: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Clean up temp files
+	// Clean up temporary files
 	os.Remove(videoOutput)
 	if audioOutput != "" {
 		os.Remove(audioOutput)
 	}
 
-	fmt.Printf("Download complete: %s\n", outputPath)
+	if downloadErr != nil {
+		os.Exit(1)
+	}
+
+	fmt.Println("Download process completed.")
 }

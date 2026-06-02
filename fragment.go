@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,11 +42,11 @@ func (fd *FragmentDownloader) Close() error {
 }
 
 // DownloadFromStart downloads all fragments from sequence 0 to current position
-func (fd *FragmentDownloader) DownloadFromStart() error {
+func (fd *FragmentDownloader) DownloadFromStart(ctx context.Context) error {
 	fmt.Println("Downloading live stream from the start...")
 
 	// First, get the current live position
-	currentSeq, err := fd.getCurrentSequence()
+	currentSeq, err := fd.getCurrentSequence(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get current position: %w", err)
 	}
@@ -55,7 +56,14 @@ func (fd *FragmentDownloader) DownloadFromStart() error {
 
 	// Download from 0 to current position
 	for seq := 0; seq <= currentSeq; seq++ {
-		if err := fd.downloadFragment(seq); err != nil {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Download interrupted.")
+			return ctx.Err()
+		default:
+		}
+
+		if err := fd.downloadFragment(ctx, seq); err != nil {
 			fmt.Printf("Warning: failed to download segment %d: %v\n", seq, err)
 			continue
 		}
@@ -67,16 +75,17 @@ func (fd *FragmentDownloader) DownloadFromStart() error {
 	fmt.Println("Initial download complete. Now polling for new segments...")
 
 	// Poll for new segments
-	return fd.pollForNewSegments(currentSeq + 1)
+	return fd.pollForNewSegments(ctx, currentSeq+1)
 }
 
 // getCurrentSequence gets the current live position from X-Head-Seqnum header
-func (fd *FragmentDownloader) getCurrentSequence() (int, error) {
+func (fd *FragmentDownloader) getCurrentSequence(ctx context.Context) (int, error) {
 	url := fd.buildFragmentURL(0)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return 0, err
 	}
+	req.Header.Set("Range", "bytes=0-0") // Optimization: request only the first byte to save bandwidth
 
 	resp, err := fd.HTTPClient.Do(req)
 	if err != nil {
@@ -84,8 +93,8 @@ func (fd *FragmentDownloader) getCurrentSequence() (int, error) {
 	}
 	defer resp.Body.Close()
 
-	// Read and discard the body
-	io.Copy(io.Discard, resp.Body)
+	// Read and discard the partial response body
+	io.CopyN(io.Discard, resp.Body, 1)
 
 	// Check X-Head-Seqnum header
 	seqnumStr := resp.Header.Get("X-Head-Seqnum")
@@ -102,11 +111,17 @@ func (fd *FragmentDownloader) getCurrentSequence() (int, error) {
 }
 
 // downloadFragment downloads a single fragment by sequence number
-func (fd *FragmentDownloader) downloadFragment(seq int) error {
+func (fd *FragmentDownloader) downloadFragment(ctx context.Context, seq int) error {
 	url := fd.buildFragmentURL(seq)
 
 	for attempt := 0; attempt < 3; attempt++ {
-		req, err := http.NewRequest("GET", url, nil)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return err
 		}
@@ -114,13 +129,17 @@ func (fd *FragmentDownloader) downloadFragment(seq int) error {
 		resp, err := fd.HTTPClient.Do(req)
 		if err != nil {
 			if attempt < 2 {
-				time.Sleep(time.Duration(attempt+1) * time.Second)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(attempt+1) * time.Second):
+				}
 				continue
 			}
 			return err
 		}
 
-		if resp.StatusCode == http.StatusOK {
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
 			_, err := io.Copy(fd.OutputFile, resp.Body)
 			resp.Body.Close()
 			return err
@@ -132,7 +151,11 @@ func (fd *FragmentDownloader) downloadFragment(seq int) error {
 		}
 
 		if attempt < 2 {
-			time.Sleep(time.Duration(attempt+1) * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			}
 		}
 	}
 
@@ -140,26 +163,42 @@ func (fd *FragmentDownloader) downloadFragment(seq int) error {
 }
 
 // pollForNewSegments continuously polls for new segments
-func (fd *FragmentDownloader) pollForNewSegments(startSeq int) error {
+func (fd *FragmentDownloader) pollForNewSegments(ctx context.Context, startSeq int) error {
 	currentSeq := startSeq
 	consecutiveEmpty := 0
 
 	for {
-		newSeq, err := fd.getCurrentSequence()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		newSeq, err := fd.getCurrentSequence(ctx)
 		if err != nil {
 			consecutiveEmpty++
 			if consecutiveEmpty > 10 {
 				fmt.Println("Stream appears to have ended.")
 				return nil
 			}
-			time.Sleep(fd.PollInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(fd.PollInterval):
+			}
 			continue
 		}
 
 		if newSeq >= currentSeq {
 			consecutiveEmpty = 0
 			for seq := currentSeq; seq <= newSeq; seq++ {
-				if err := fd.downloadFragment(seq); err != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				if err := fd.downloadFragment(ctx, seq); err != nil {
 					fmt.Printf("Warning: failed to download segment %d: %v\n", seq, err)
 					continue
 				}
@@ -176,7 +215,11 @@ func (fd *FragmentDownloader) pollForNewSegments(startSeq int) error {
 			}
 		}
 
-		time.Sleep(fd.PollInterval)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(fd.PollInterval):
+		}
 	}
 }
 
