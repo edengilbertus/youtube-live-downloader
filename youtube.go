@@ -205,17 +205,22 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 // ExtractVideoInfo fetches video metadata from YouTube, supporting optional PO-Token validation and browser cookies
 func ExtractVideoInfo(videoID string, poToken string, visitorData string, cookies []*http.Cookie) (*VideoInfo, error) {
 	var err error
-	poToken, visitorData, err = getOrGenerateTokens(poToken, visitorData)
-	if err != nil {
-		fmt.Printf("\n[!] Warning: Automated PO Token generation failed/timed out: %v\n", err)
-		fmt.Println("    To bypass YouTube's bot checks manually, please run the tool with browser tokens:")
-		fmt.Println("    1. Open Chrome/Firefox Developer Tools (F12) and go to the Network tab.")
-		fmt.Println("    2. Navigate to any YouTube video and play it.")
-		fmt.Println("    3. Search for the \"/v1/player\" request in the Network log.")
-		fmt.Println("    4. Copy 'poToken' (from serviceIntegrityDimensions) and 'visitorData' (from client context).")
-		fmt.Println("    5. Run the tool with the flags:")
-		fmt.Printf("       ./yt-live --po-token \"COPIED_PO_TOKEN\" --visitor-data \"COPIED_VISITOR_DATA\" https://www.youtube.com/live/%s\n\n", videoID)
-		fmt.Println("Attempting download without token...")
+	if len(cookies) == 0 && (poToken == "" || visitorData == "") {
+		poToken, visitorData, err = getOrGenerateTokens(poToken, visitorData)
+		if err != nil {
+			fmt.Printf("\n[!] Warning: Automated PO Token generation failed/timed out: %v\n", err)
+			fmt.Println("    To bypass YouTube's bot checks manually, please run the tool with browser tokens:")
+			fmt.Println("    1. Open Chrome/Firefox Developer Tools (F12) and go to the Network tab.")
+			fmt.Println("    2. Navigate to any YouTube video and play it.")
+			fmt.Println("    3. Search for the \"/v1/player\" request in the Network log.")
+			fmt.Println("    4. Copy 'poToken' (from serviceIntegrityDimensions) and 'visitorData' (from client context).")
+			fmt.Println("    5. Run the tool with the flags:")
+			fmt.Printf("       ./yt-live --po-token \"COPIED_PO_TOKEN\" --visitor-data \"COPIED_VISITOR_DATA\" https://www.youtube.com/live/%s\n\n", videoID)
+			fmt.Println("Attempting download without token...")
+		}
+	} else if poToken == "" || visitorData == "" {
+		// If cookies are present, we don't need to generate a PO Token
+		// But if they were manually supplied, we still use them.
 	}
 
 	var errs []string
