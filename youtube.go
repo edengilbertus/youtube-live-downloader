@@ -273,8 +273,6 @@ func createBrowserHTTPClient(timeout time.Duration) *http.Client {
 				MinVersion: tls.VersionTLS13, // Force TLS 1.3 for modern browser TLS hello
 			},
 			TLSHandshakeTimeout: 10 * time.Second,
-			// Disable HTTP/2 to bypass HTTP/2 client fingerprinting checks by GFE
-			TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
 		},
 	}
 }
