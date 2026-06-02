@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // YouTube client contexts for innertube API
@@ -76,7 +78,7 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 		return poToken, visitorData, nil
 	}
 
-	fmt.Println("No tokens provided. Generating PO Token automatically using Node.js...")
+	fmt.Println("No tokens provided. Attempting to generate PO Token automatically in background...")
 
 	cacheDir := getCacheDir()
 	jsPath := filepath.Join(cacheDir, "get_token.js")
@@ -87,15 +89,21 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to write get_token.js: %w", err)
 	}
 
-	// Prepare token generation command
+	// Prepare token generation command with a 15-second timeout to prevent infinite hangs
 	runCmd := func() (string, string, error) {
-		cmd := exec.Command("node", "get_token.js")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "node", "get_token.js")
 		cmd.Dir = cacheDir // Execute command inside the cache directory
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", "", fmt.Errorf("generation timed out after 15s")
+			}
 			return "", "", fmt.Errorf("node error: %w (stderr: %s)", err, stderr.String())
 		}
 
@@ -132,7 +140,15 @@ func ExtractVideoInfo(videoID string, poToken string, visitorData string) (*Vide
 	var err error
 	poToken, visitorData, err = getOrGenerateTokens(poToken, visitorData)
 	if err != nil {
-		fmt.Printf("Warning: PO Token generation failed: %v. Attempting download without token.\n", err)
+		fmt.Printf("\n[!] Warning: Automated PO Token generation failed/timed out: %v\n", err)
+		fmt.Println("    To bypass YouTube's bot checks manually, please run the tool with browser tokens:")
+		fmt.Println("    1. Open Chrome/Firefox Developer Tools (F12) and go to the Network tab.")
+		fmt.Println("    2. Navigate to any YouTube video and play it.")
+		fmt.Println("    3. Search for the \"/v1/player\" request in the Network log.")
+		fmt.Println("    4. Copy 'poToken' (from serviceIntegrityDimensions) and 'visitorData' (from client context).")
+		fmt.Println("    5. Run the tool with the flags:")
+		fmt.Printf("       ./yt-live --po-token \"COPIED_PO_TOKEN\" --visitor-data \"COPIED_VISITOR_DATA\" https://www.youtube.com/live/%s\n\n", videoID)
+		fmt.Println("Attempting download without token...")
 	}
 
 	for _, ctx := range clientContexts {
