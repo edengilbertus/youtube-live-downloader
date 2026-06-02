@@ -217,6 +217,22 @@ func getOrGenerateTokens(poToken, visitorData string) (string, string, error) {
 
 // ExtractVideoInfo fetches video metadata from YouTube, supporting optional PO-Token validation and browser cookies
 func ExtractVideoInfo(videoID string, poToken string, visitorData string, cookies []*http.Cookie) (*VideoInfo, error) {
+	var errs []string
+
+	// Stage 1: Try all client contexts WITHOUT cookies or tokens first (Standard, logged-out, unblocked requests)
+	for _, ctx := range clientContexts {
+		info, err := tryExtractWithClient(videoID, ctx, "", "", nil)
+		if err == nil && (info.DashManifestURL != "" || info.HLSManifestURL != "") {
+			return info, nil
+		}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s (anonymous): %v", ctx["clientName"], err))
+		} else {
+			errs = append(errs, fmt.Sprintf("%s (anonymous): no streaming data", ctx["clientName"]))
+		}
+	}
+
+	// Stage 2: If anonymous requests fail, attempt to load PO Token / Visitor Data and try with authentication/cookies
 	var err error
 	if len(cookies) == 0 && (poToken == "" || visitorData == "") {
 		poToken, visitorData, err = getOrGenerateTokens(poToken, visitorData)
@@ -231,23 +247,20 @@ func ExtractVideoInfo(videoID string, poToken string, visitorData string, cookie
 			fmt.Printf("       ./yt-live --po-token \"COPIED_PO_TOKEN\" --visitor-data \"COPIED_VISITOR_DATA\" https://www.youtube.com/live/%s\n\n", videoID)
 			fmt.Println("Attempting download without token...")
 		}
-	} else if poToken == "" || visitorData == "" {
-		// If cookies are present, we don't need to generate a PO Token
-		// But if they were manually supplied, we still use them.
 	}
 
-	var errs []string
 	for _, ctx := range clientContexts {
 		info, err := tryExtractWithClient(videoID, ctx, poToken, visitorData, cookies)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", ctx["clientName"], err))
+			errs = append(errs, fmt.Sprintf("%s (authenticated): %v", ctx["clientName"], err))
 			continue
 		}
 		if info.DashManifestURL != "" || info.HLSManifestURL != "" {
 			return info, nil
 		}
-		errs = append(errs, fmt.Sprintf("%s: no streaming data URLs in response", ctx["clientName"]))
+		errs = append(errs, fmt.Sprintf("%s (authenticated): no streaming data", ctx["clientName"]))
 	}
+
 	return nil, fmt.Errorf("could not extract video info for %s (details: %s)", videoID, strings.Join(errs, "; "))
 }
 
