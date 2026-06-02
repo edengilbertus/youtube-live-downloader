@@ -36,10 +36,10 @@ type VideoInfo struct {
 	HLSManifestURL  string
 }
 
-// ExtractVideoInfo fetches video metadata from YouTube
-func ExtractVideoInfo(videoID string) (*VideoInfo, error) {
+// ExtractVideoInfo fetches video metadata from YouTube, supporting optional PO-Token validation
+func ExtractVideoInfo(videoID string, poToken string, visitorData string) (*VideoInfo, error) {
 	for _, ctx := range clientContexts {
-		info, err := tryExtractWithClient(videoID, ctx)
+		info, err := tryExtractWithClient(videoID, ctx, poToken, visitorData)
 		if err != nil {
 			continue
 		}
@@ -50,12 +50,28 @@ func ExtractVideoInfo(videoID string) (*VideoInfo, error) {
 	return nil, fmt.Errorf("could not extract video info for %s", videoID)
 }
 
-func tryExtractWithClient(videoID string, clientCtx map[string]interface{}) (*VideoInfo, error) {
+func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poToken string, visitorData string) (*VideoInfo, error) {
+	// Deep copy clientCtx to avoid mutating global slice across calls
+	ctxCopy := make(map[string]interface{})
+	for k, v := range clientCtx {
+		ctxCopy[k] = v
+	}
+	if visitorData != "" {
+		ctxCopy["visitorData"] = visitorData
+	}
+
 	requestBody := map[string]interface{}{
 		"videoId": videoID,
 		"context": map[string]interface{}{
-			"client": clientCtx,
+			"client": ctxCopy,
 		},
+	}
+
+	if poToken != "" {
+		ctxObj := requestBody["context"].(map[string]interface{})
+		ctxObj["serviceIntegrityDimensions"] = map[string]interface{}{
+			"poToken": poToken,
+		}
 	}
 
 	body, err := json.Marshal(requestBody)
@@ -66,7 +82,14 @@ func tryExtractWithClient(videoID string, clientCtx map[string]interface{}) (*Vi
 	apiKey := "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 	url := fmt.Sprintf("https://www.youtube.com/youtubei/v1/player?key=%s", apiKey)
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

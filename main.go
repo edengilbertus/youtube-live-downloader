@@ -17,6 +17,8 @@ func main() {
 	outputFlag := flag.String("output", "%(title)s-%(id)s.%(ext)s", "Output file path template")
 	listFormats := flag.Bool("list-formats", false, "List available formats")
 	showVersion := flag.Bool("version", false, "Show version")
+	poTokenFlag := flag.String("po-token", "", "YouTube Proof of Origin token (PO Token)")
+	visitorDataFlag := flag.String("visitor-data", "", "YouTube Visitor Data header string")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <URL>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Download YouTube live streams from the start.\n\n")
@@ -24,7 +26,7 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s https://www.youtube.com/live/VIDEO_ID\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s --output \"%%(title)s.%%(ext)s\" URL\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --po-token \"PO_TOKEN_HERE\" --visitor-data \"VISITOR_DATA_HERE\" URL\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -51,7 +53,7 @@ func main() {
 	fmt.Printf("Video ID: %s\n", videoID)
 
 	fmt.Println("Extracting video info...")
-	info, err := ExtractVideoInfo(videoID)
+	info, err := ExtractVideoInfo(videoID, *poTokenFlag, *visitorDataFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error extracting video info: %v\n", err)
 		os.Exit(1)
@@ -136,7 +138,7 @@ func main() {
 	errChan := make(chan error, 2)
 
 	// Initialize video downloader
-	videoOutput := fmt.Sprintf("%s_video.tmp", videoID)
+	videoOutput := fmt.Sprintf("%s_video.ts", videoID)
 	videoBaseURL := BuildFragmentBaseURL(bestVideo)
 	videoDownloader, err := NewFragmentDownloader(videoBaseURL, videoOutput)
 	if err != nil {
@@ -160,7 +162,7 @@ func main() {
 	var audioDownloader *FragmentDownloader
 	audioOutput := ""
 	if bestAudio != nil {
-		audioOutput = fmt.Sprintf("%s_audio.tmp", videoID)
+		audioOutput = fmt.Sprintf("%s_audio.ts", videoID)
 		audioBaseURL := BuildFragmentBaseURL(*bestAudio)
 		audioDownloader, err = NewFragmentDownloader(audioBaseURL, audioOutput)
 		if err != nil {
@@ -206,7 +208,7 @@ func main() {
 
 	// Check if video file contains downloaded content to mux
 	if fileInfo, err := os.Stat(videoOutput); err == nil && fileInfo.Size() > 0 {
-		outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mkv")
+		outputPath := FormatOutputPath(*outputFlag, info.Title, videoID, "mp4")
 		muxer := NewMuxer()
 
 		fmt.Println("Muxing streams...")
