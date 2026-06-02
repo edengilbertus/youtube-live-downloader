@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,10 +13,22 @@ type Muxer struct {
 	FFmpegPath string
 }
 
-// NewMuxer creates a new muxer instance
+// NewMuxer creates a new muxer instance, checking first for a local ffmpeg binary
 func NewMuxer() *Muxer {
+	ffmpegPath := "ffmpeg"
+	
+	// Check if ffmpeg exists in the current directory or adjacent to the binary
+	if _, err := os.Stat("./ffmpeg"); err == nil {
+		ffmpegPath = "./ffmpeg"
+	} else if exePath, err := os.Executable(); err == nil {
+		localPath := filepath.Join(filepath.Dir(exePath), "ffmpeg")
+		if _, err := os.Stat(localPath); err == nil {
+			ffmpegPath = localPath
+		}
+	}
+	
 	return &Muxer{
-		FFmpegPath: "ffmpeg",
+		FFmpegPath: ffmpegPath,
 	}
 }
 

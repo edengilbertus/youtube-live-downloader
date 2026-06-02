@@ -1,7 +1,9 @@
 # Binaries
 youtube-live
 yt-live
+ffmpeg
 
 # Temporary files
 *.ts
 *.m4s
+*.m3u8
