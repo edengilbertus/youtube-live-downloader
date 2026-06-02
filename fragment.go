@@ -32,7 +32,7 @@ func NewFragmentDownloader(baseURL, outputPath string, cookies []*http.Cookie) (
 	return &FragmentDownloader{
 		BaseURL:      baseURL,
 		OutputFile:   f,
-		HTTPClient:   &http.Client{Timeout: 30 * time.Second},
+		HTTPClient:   createBrowserHTTPClient(30 * time.Second),
 		LastSeq:      -1,
 		PollInterval: 5 * time.Second,
 		Cookies:      cookies,

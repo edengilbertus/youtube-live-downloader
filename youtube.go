@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -238,9 +239,22 @@ func ExtractVideoInfo(videoID string, poToken string, visitorData string, cookie
 	return nil, fmt.Errorf("could not extract video info for %s (details: %s)", videoID, strings.Join(errs, "; "))
 }
 
-var httpClient = &http.Client{
-	Timeout: 15 * time.Second,
+// createBrowserHTTPClient creates an http.Client pre-configured to bypass Google's TLS fingerprint block
+func createBrowserHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS13, // Force TLS 1.3 for modern browser TLS hello
+			},
+			TLSHandshakeTimeout: 10 * time.Second,
+			// Disable HTTP/2 to bypass HTTP/2 client fingerprinting checks by GFE
+			TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		},
+	}
 }
+
+var httpClient = createBrowserHTTPClient(15 * time.Second)
 
 func tryExtractWithClient(videoID string, clientCtx map[string]interface{}, poToken string, visitorData string, cookies []*http.Cookie) (*VideoInfo, error) {
 	// Deep copy clientCtx to avoid mutating global slice across calls

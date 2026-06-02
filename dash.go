@@ -73,7 +73,8 @@ func ParseDASHManifest(url string, cookies []*http.Cookie) (*DASHManifest, error
 		req.Header.Set("Cookie", BuildCookieHeader(cookies))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := createBrowserHTTPClient(15 * time.Second)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
